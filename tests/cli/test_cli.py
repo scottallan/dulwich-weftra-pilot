@@ -5435,6 +5435,168 @@ class DiagnoseCommandTest(DulwichCliTestCase):
             self.assertIn("urllib3:", log_output)
 
 
+class BugreportCommandTest(DulwichCliTestCase):
+    """Tests for bugreport command."""
+
+    def _find_report(self, directory):
+        matches = glob.glob(os.path.join(directory, "git-bugreport-*.txt"))
+        self.assertEqual(1, len(matches), f"expected one report in {directory!r}")
+        return matches[0]
+
+    def test_bugreport_default_filename_and_location(self):
+        before = time.strftime("%Y-%m-%d-%H%M")
+        result, _stdout, _stderr = self._run_cli("bugreport")
+        after = time.strftime("%Y-%m-%d-%H%M")
+        self.assertIsNone(result)
+
+        report_path = self._find_report(self.repo_path)
+        basename = os.path.basename(report_path)
+        self.assertRegex(basename, r"^git-bugreport-\d{4}-\d{2}-\d{2}-\d{4}\.txt$")
+        # The embedded timestamp should be "now", within the window the
+        # command ran in.
+        suffix = basename[len("git-bugreport-") : -len(".txt")]
+        self.assertIn(suffix, {before, after})
+
+    def test_bugreport_content_sections(self):
+        self._run_cli("bugreport")
+        report_path = self._find_report(self.repo_path)
+        with open(report_path, encoding="utf-8") as f:
+            content = f.read()
+
+        # Reporter template section (spec 3.1)
+        self.assertIn("Thank you for filling out a Dulwich bug report", content)
+        self.assertIn("Steps to reproduce your issue", content)
+
+        # Environment/system section (spec 3.2), at least as complete as
+        # `dulwich diagnose`.
+        self.assertIn("dulwich version:", content)
+        self.assertIn(f"Python version: {sys.version}", content)
+        self.assertIn(f"Python executable: {sys.executable}", content)
+        self.assertIn("Installed dependencies:", content)
+
+        # Repository section (spec 3.2), since this is run inside a repo.
+        self.assertIn("[Repository Info]", content)
+        self.assertIn("Current branch:", content)
+        self.assertIn("Working tree status:", content)
+
+    def test_bugreport_repository_status_summary(self):
+        # Create a mix of staged, unstaged and untracked changes.
+        tracked = os.path.join(self.repo_path, "tracked.txt")
+        with open(tracked, "w") as f:
+            f.write("initial\n")
+        self._run_cli("add", "tracked.txt")
+        self._run_cli("commit", "--message=Initial commit")
+
+        with open(tracked, "w") as f:
+            f.write("modified\n")
+        self._run_cli("add", "tracked.txt")
+
+        staged_only = os.path.join(self.repo_path, "staged_only.txt")
+        with open(staged_only, "w") as f:
+            f.write("new\n")
+        self._run_cli("add", "staged_only.txt")
+
+        untracked = os.path.join(self.repo_path, "untracked.txt")
+        with open(untracked, "w") as f:
+            f.write("untracked\n")
+
+        self._run_cli("bugreport")
+        report_path = self._find_report(self.repo_path)
+        with open(report_path, encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("Current branch: master", content)
+        self.assertIn(
+            "Working tree status: 2 staged change(s), 0 unstaged change(s), "
+            "1 untracked file(s)",
+            content,
+        )
+
+    def test_bugreport_no_secrets_leaked(self):
+        secret_url = "https://user:supersecret@example.com/repo.git"
+        self._run_cli(
+            "config",
+            "remote.origin.url",
+            secret_url,
+        )
+
+        self._run_cli("bugreport")
+        report_path = self._find_report(self.repo_path)
+        with open(report_path, encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertNotIn("supersecret", content)
+        self.assertNotIn(secret_url, content)
+
+    def test_bugreport_output_directory_long_flag(self):
+        out_dir = os.path.join(self.test_dir, "reports")
+        os.mkdir(out_dir)
+        result, _stdout, _stderr = self._run_cli(
+            "bugreport", "--output-directory", out_dir
+        )
+        self.assertIsNone(result)
+
+        self._find_report(out_dir)
+        # Nothing should have been written to the current directory.
+        self.assertEqual([], glob.glob(os.path.join(self.repo_path, "*.txt")))
+
+    def test_bugreport_output_directory_short_flag(self):
+        out_dir = os.path.join(self.test_dir, "reports-short")
+        os.mkdir(out_dir)
+        result, _stdout, _stderr = self._run_cli("bugreport", "-o", out_dir)
+        self.assertIsNone(result)
+
+        self._find_report(out_dir)
+        self.assertEqual([], glob.glob(os.path.join(self.repo_path, "*.txt")))
+
+    def test_bugreport_suffix_long_flag(self):
+        result, _stdout, _stderr = self._run_cli("bugreport", "--suffix", "custom-%Y")
+        self.assertIsNone(result)
+
+        expected_name = f"git-bugreport-custom-{time.strftime('%Y')}.txt"
+        self.assertTrue(os.path.exists(os.path.join(self.repo_path, expected_name)))
+
+    def test_bugreport_suffix_short_flag(self):
+        result, _stdout, _stderr = self._run_cli("bugreport", "-s", "%Y")
+        self.assertIsNone(result)
+
+        expected_name = f"git-bugreport-{time.strftime('%Y')}.txt"
+        self.assertTrue(os.path.exists(os.path.join(self.repo_path, expected_name)))
+
+    def test_bugreport_outside_repository(self):
+        outside_dir = os.path.join(self.test_dir, "not-a-repo")
+        os.mkdir(outside_dir)
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(outside_dir)
+            result = cli.main(["bugreport"])
+        finally:
+            os.chdir(old_cwd)
+        self.assertIsNone(result)
+
+        report_path = self._find_report(outside_dir)
+        with open(report_path, encoding="utf-8") as f:
+            content = f.read()
+
+        # Environment section still present; repository section is
+        # explicitly marked not applicable rather than omitted silently
+        # or raising.
+        self.assertIn("dulwich version:", content)
+        self.assertIn("[Repository Info]", content)
+        self.assertIn("Not run inside a Git repository", content)
+        self.assertNotIn("Current branch:", content)
+
+    def test_bugreport_unwritable_output_directory(self):
+        bad_dir = os.path.join(self.test_dir, "does-not-exist", "nested")
+        with self.assertLogs("dulwich.cli", level="ERROR") as cm:
+            result, _stdout, _stderr = self._run_cli(
+                "bugreport", "--output-directory", bad_dir
+            )
+        self.assertEqual(1, result)
+        self.assertIn("error", "\n".join(cm.output).lower())
+        self.assertEqual([], glob.glob(os.path.join(self.repo_path, "*.txt")))
+
+
 class RepoDiscoveryTest(DulwichCliTestCase):
     """Tests that commands locate the repository like git does."""
 

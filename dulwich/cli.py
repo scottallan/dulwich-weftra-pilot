@@ -5073,6 +5073,49 @@ class cmd_describe(Command):
         logger.info(porcelain.describe(None))
 
 
+# Dependencies whose presence/version is useful for diagnosing dulwich
+# issues. Shared between `dulwich diagnose` and `dulwich bugreport` so the
+# two commands stay in sync.
+_DIAGNOSTIC_CORE_DEPENDENCIES = [
+    ("urllib3", "core"),
+    ("typing_extensions", "core (Python < 3.12)"),
+]
+_DIAGNOSTIC_OPTIONAL_DEPENDENCIES = [
+    ("fastimport", "fastimport"),
+    ("gpg", "pgp"),
+    ("paramiko", "paramiko"),
+    ("rich", "colordiff"),
+    ("merge3", "merge"),
+    ("patiencediff", "patiencediff"),
+    ("atheris", "fuzzing"),
+]
+
+
+def _iter_diagnostic_dependency_versions() -> Iterator[tuple[str, str | None, str]]:
+    """Yield (name, version-or-None-if-not-installed, dependency type)."""
+    for dep, dep_type in (
+        _DIAGNOSTIC_CORE_DEPENDENCIES + _DIAGNOSTIC_OPTIONAL_DEPENDENCIES
+    ):
+        try:
+            module = __import__(dep)
+        except ImportError:
+            yield dep, None, dep_type
+        else:
+            yield dep, getattr(module, "__version__", "(unknown)"), dep_type
+
+
+def _dulwich_version() -> str:
+    """Return the installed dulwich version, or a placeholder if unknown."""
+    import dulwich
+
+    version = getattr(dulwich, "__version__", None)
+    if version is None:
+        return "(unknown)"
+    if isinstance(version, tuple):
+        return ".".join(str(part) for part in version)
+    return str(version)
+
+
 class cmd_diagnose(Command):
     """Display diagnostic information about the Python environment."""
 
@@ -5112,31 +5155,165 @@ class cmd_diagnose(Command):
 
         # List installed dependencies and their versions
         logger.info("Installed dependencies:")
-
-        # Core dependencies
-        dependencies = [
-            ("urllib3", "core"),
-            ("typing_extensions", "core (Python < 3.12)"),
-        ]
-
-        # Optional dependencies
-        optional_dependencies = [
-            ("fastimport", "fastimport"),
-            ("gpg", "pgp"),
-            ("paramiko", "paramiko"),
-            ("rich", "colordiff"),
-            ("merge3", "merge"),
-            ("patiencediff", "patiencediff"),
-            ("atheris", "fuzzing"),
-        ]
-
-        for dep, dep_type in dependencies + optional_dependencies:
-            try:
-                module = __import__(dep)
-                version = getattr(module, "__version__", "(unknown)")
-                logger.info("  %s: %s [%s]", dep, version, dep_type)
-            except ImportError:
+        for dep, version, dep_type in _iter_diagnostic_dependency_versions():
+            if version is None:
                 logger.info("  %s: (not installed) [%s]", dep, dep_type)
+            else:
+                logger.info("  %s: %s [%s]", dep, version, dep_type)
+
+
+_BUGREPORT_FILENAME_PREFIX = "git-bugreport-"
+_BUGREPORT_DEFAULT_SUFFIX_FORMAT = "%Y-%m-%d-%H%M"
+
+_BUGREPORT_TEMPLATE = """\
+Thank you for filling out a Dulwich bug report!
+Please answer the following questions to help us understand your issue.
+
+What did you do before the bug happened? (Steps to reproduce your issue)
+
+What did you expect to happen? (Expected behavior)
+
+What happened instead? (Actual behavior)
+
+What's different between what you expected and what actually happened?
+
+Anything else you want to add:
+
+Please review the rest of the bug report below.
+You can delete any lines you don't wish to share.
+"""
+
+
+def _bugreport_environment_section() -> list[str]:
+    """Collect environment/system information for a bug report.
+
+    At least as complete as what ``dulwich diagnose`` reports (version
+    info, interpreter info, installed/optional dependency versions).
+    """
+    import platform
+
+    lines = ["[System Info]"]
+    lines.append(f"dulwich version: {_dulwich_version()}")
+    lines.append(f"Python version: {sys.version}")
+    lines.append(f"Python executable: {sys.executable}")
+    lines.append(f"Platform: {platform.platform()}")
+
+    pythonpath = os.environ.get("PYTHONPATH", "")
+    lines.append(f"PYTHONPATH: {pythonpath or '(not set)'}")
+
+    lines.append("sys.path:")
+    lines.extend(f"  {path_entry}" for path_entry in sys.path)
+
+    lines.append("Installed dependencies:")
+    for dep, version, dep_type in _iter_diagnostic_dependency_versions():
+        if version is None:
+            lines.append(f"  {dep}: (not installed) [{dep_type}]")
+        else:
+            lines.append(f"  {dep}: {version} [{dep_type}]")
+
+    return lines
+
+
+def _bugreport_repository_section() -> list[str]:
+    """Collect repository information for a bug report, if run inside one.
+
+    Only reports *which* settings are in effect (branch, HEAD, a summary
+    of working-tree status), never config values, remote URLs, or other
+    data that could contain credentials or otherwise-sensitive content.
+    """
+    lines = ["[Repository Info]"]
+    try:
+        with porcelain.open_repo_closing(None) as r:
+            try:
+                branch = porcelain.active_branch(r)
+            except (KeyError, IndexError, ValueError):
+                branch = None
+            if branch is not None:
+                lines.append(f"Current branch: {branch.decode('utf-8', 'replace')}")
+            else:
+                lines.append("Current branch: (none; detached HEAD)")
+
+            try:
+                head_sha = r.head()
+                lines.append(f"HEAD: {head_sha.decode('ascii')}")
+            except KeyError:
+                lines.append("HEAD: (unborn; no commits yet)")
+
+            status = porcelain.status(r)
+            staged_count = sum(len(names) for names in status.staged.values())
+            lines.append(
+                "Working tree status: "
+                f"{staged_count} staged change(s), "
+                f"{len(status.unstaged)} unstaged change(s), "
+                f"{len(status.untracked)} untracked file(s)"
+            )
+    except NotGitRepository:
+        lines.append("Not run inside a Git repository; not applicable.")
+
+    return lines
+
+
+def _generate_bugreport() -> str:
+    """Generate the full text content of a ``dulwich bugreport`` file."""
+    sections = [
+        _BUGREPORT_TEMPLATE,
+        "\n".join(_bugreport_environment_section()),
+        "\n".join(_bugreport_repository_section()),
+    ]
+    return "\n\n".join(sections) + "\n"
+
+
+class cmd_bugreport(Command):
+    """Collect information for bug reports."""
+
+    def run(self, args: Sequence[str]) -> int | None:
+        """Execute the bugreport command.
+
+        Args:
+            args: Command line arguments
+        """
+        parser = argparse.ArgumentParser(prog="dulwich bugreport")
+        parser.add_argument(
+            "-o",
+            "--output-directory",
+            type=str,
+            default=None,
+            help="Place the resulting report file in <path> instead of the "
+            "current directory",
+        )
+        parser.add_argument(
+            "-s",
+            "--suffix",
+            type=str,
+            default=_BUGREPORT_DEFAULT_SUFFIX_FORMAT,
+            help="Specify an alternate strftime(3) format for the suffix of "
+            "the report filename",
+        )
+        parsed_args = parser.parse_args(args)
+
+        import time
+
+        try:
+            suffix = time.strftime(parsed_args.suffix)
+        except ValueError as e:
+            logger.error("error: invalid --suffix format: %s", e)
+            return 1
+
+        filename = f"{_BUGREPORT_FILENAME_PREFIX}{suffix}.txt"
+        output_directory = parsed_args.output_directory or os.getcwd()
+        output_path = os.path.join(output_directory, filename)
+
+        report = _generate_bugreport()
+
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(report)
+        except OSError as e:
+            logger.error("error: could not create bug report at %s: %s", output_path, e)
+            return 1
+
+        logger.info("Created new report at %s", output_path)
+        return None
 
 
 class cmd_merge(Command):
@@ -7778,6 +7955,7 @@ commands = {
     "bisect": cmd_bisect,
     "blame": cmd_blame,
     "branch": cmd_branch,
+    "bugreport": cmd_bugreport,
     "bundle": cmd_bundle,
     "cat-file": cmd_cat_file,
     "check-ignore": cmd_check_ignore,
