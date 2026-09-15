@@ -5607,6 +5607,34 @@ class BugreportCommandTest(DulwichCliTestCase):
         self.assertIn("error", "\n".join(cm.output).lower())
         self.assertEqual([], glob.glob(os.path.join(self.repo_path, "*.txt")))
 
+    def test_bugreport_suffix_rejects_path_separator(self):
+        # A --suffix that expands to something containing a path separator
+        # must not be allowed to steer the report outside the output
+        # directory.
+        with self.assertLogs("dulwich.cli", level="ERROR") as cm:
+            result, _stdout, _stderr = self._run_cli(
+                "bugreport", "-s", "../../etc/pwned"
+            )
+        self.assertEqual(1, result)
+        self.assertIn("error", "\n".join(cm.output).lower())
+        self.assertEqual([], glob.glob(os.path.join(self.repo_path, "*.txt")))
+        self.assertFalse(
+            os.path.exists(os.path.join(self.test_dir, "etc", "pwned.txt"))
+        )
+
+    def test_bugreport_no_pythonpath_or_syspath_leaked(self):
+        # The environment section should stick to the spec's minimum data
+        # points (version/interpreter/platform/dependencies) and not dump
+        # PYTHONPATH or sys.path, which can disclose local filesystem
+        # layout when a report is pasted publicly.
+        self._run_cli("bugreport")
+        report_path = self._find_report(self.repo_path)
+        with open(report_path, encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertNotIn("PYTHONPATH", content)
+        self.assertNotIn("sys.path", content)
+
 
 class RepoDiscoveryTest(DulwichCliTestCase):
     """Tests that commands locate the repository like git does."""

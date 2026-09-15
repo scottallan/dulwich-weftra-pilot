@@ -5198,12 +5198,6 @@ def _bugreport_environment_section() -> list[str]:
     lines.append(f"Python executable: {sys.executable}")
     lines.append(f"Platform: {platform.platform()}")
 
-    pythonpath = os.environ.get("PYTHONPATH", "")
-    lines.append(f"PYTHONPATH: {pythonpath or '(not set)'}")
-
-    lines.append("sys.path:")
-    lines.extend(f"  {path_entry}" for path_entry in sys.path)
-
     lines.append("Installed dependencies:")
     for dep, version, dep_type in _iter_diagnostic_dependency_versions():
         if version is None:
@@ -5297,6 +5291,14 @@ class cmd_bugreport(Command):
             suffix = time.strftime(parsed_args.suffix)
         except ValueError as e:
             logger.error("error: invalid --suffix format: %s", e)
+            return 1
+
+        if os.sep in suffix or (os.altsep and os.altsep in suffix):
+            logger.error(
+                "error: invalid --suffix format: resulting suffix %r must not "
+                "contain path separators",
+                suffix,
+            )
             return 1
 
         filename = f"{_BUGREPORT_FILENAME_PREFIX}{suffix}.txt"
