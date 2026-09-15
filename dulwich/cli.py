@@ -5312,7 +5312,8 @@ class cmd_bugreport(Command):
             logger.error("error: could not create bug report at %s: %s", output_path, e)
             return 1
 
-        logger.info("Created new report at %s", output_path)
+        # Match C git's exact wording so scripts that scrape it keep working.
+        logger.info("Created new report at '%s'.", output_path)
         return None
 
 

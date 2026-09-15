@@ -5563,6 +5563,17 @@ class BugreportCommandTest(DulwichCliTestCase):
         expected_name = f"git-bugreport-{time.strftime('%Y')}.txt"
         self.assertTrue(os.path.exists(os.path.join(self.repo_path, expected_name)))
 
+    def test_bugreport_suffix_without_format_directives(self):
+        # A suffix with no strftime directives is used literally, as in C git,
+        # and the success message names the created file the way git does.
+        with self.assertLogs("dulwich.cli", level="INFO") as cm:
+            result, _stdout, _stderr = self._run_cli("bugreport", "-s", "release-1")
+        self.assertIsNone(result)
+
+        expected_path = os.path.join(self.repo_path, "git-bugreport-release-1.txt")
+        self.assertTrue(os.path.exists(expected_path))
+        self.assertIn(f"Created new report at '{expected_path}'.", "\n".join(cm.output))
+
     def test_bugreport_outside_repository(self):
         outside_dir = os.path.join(self.test_dir, "not-a-repo")
         os.mkdir(outside_dir)
