@@ -1,5 +1,14 @@
 1.2.15	UNRELEASED
 
+ * Add ``dulwich bugreport``, matching C git's ``git bugreport`` invocation
+   contract (default ``git-bugreport-<timestamp>.txt`` filename,
+   ``-o``/``--output-directory``, ``-s``/``--suffix``). The generated report
+   combines a fill-in-the-blanks reporter template with automatically
+   collected environment/dulwich version information and, when run inside a
+   repository, branch/HEAD and working-tree status summaries, without ever
+   writing out credentials, raw remote URLs, or raw config values. The
+   ``--diagnose`` archive option is not implemented. (#1836)
+
  * Memoize tag peeling on the object store, so refs sharing an annotated tag
    chain no longer re-walk it once per ref. ``show_ref --dereference`` and the
    ref advertisement were quadratic. (Jelmer Vernooĳ, #2406)
