@@ -1,5 +1,14 @@
 1.2.15	UNRELEASED
 
+ * Add ``dulwich bugreport`` (and ``porcelain.bugreport``), matching C git's
+   documented ``git bugreport`` file-naming contract (``-o``/
+   ``--output-directory``, ``-s``/``--suffix``, default
+   ``git-bugreport-<timestamp>.txt``, refusal to overwrite an existing
+   report). The report collects dulwich/Python/platform information and,
+   when run inside a repository, that repository's path, bareness and
+   enabled hooks. ``--diagnose`` is not implemented; passing it fails with
+   an explicit error rather than being silently accepted. (scott, #1836)
+
  * Memoize tag peeling on the object store, so refs sharing an annotated tag
    chain no longer re-walk it once per ref. ``show_ref --dereference`` and the
    ref advertisement were quadratic. (Jelmer Vernooĳ, #2406)

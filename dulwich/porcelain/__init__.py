@@ -88,7 +88,12 @@ Functions should generally accept both unicode strings and bytestrings
 """
 
 __all__ = [
+    "BUGREPORT_DEFAULT_SUFFIX_FORMAT",
     "INFINITE_DEPTH",
+    "BugreportError",
+    "BugreportFileExists",
+    "BugreportInvalidSuffix",
+    "BugreportOutputDirectoryNotFound",
     "CheckoutError",
     "CountObjectsResult",
     "DivergedBranches",
@@ -118,6 +123,7 @@ __all__ = [
     "branch_list",
     "branch_remotes_list",
     "branches_containing",
+    "bugreport",
     "cat_file_content",
     "cat_file_size",
     "cat_file_type",
@@ -437,6 +443,16 @@ from ..sparse_patterns import (
     determine_included_paths,
 )
 from ..trailers import add_trailer_to_message, format_trailers, parse_trailers
+from .bugreport import (
+    DEFAULT_SUFFIX_FORMAT as BUGREPORT_DEFAULT_SUFFIX_FORMAT,
+)
+from .bugreport import (
+    BugreportError,
+    BugreportFileExists,
+    BugreportInvalidSuffix,
+    BugreportOutputDirectoryNotFound,
+    bugreport,
+)
 from .lfs import (
     lfs_clean,
     lfs_fetch,

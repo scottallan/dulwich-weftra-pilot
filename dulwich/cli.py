@@ -4395,6 +4395,85 @@ class cmd_check_mailmap(Command):
             logger.info(canonical_identity)
 
 
+class cmd_bugreport(Command):
+    """Collect information for a bug report."""
+
+    @staticmethod
+    def _build_parser() -> argparse.ArgumentParser:
+        """Build the argument parser for the bugreport command."""
+        parser = argparse.ArgumentParser(
+            prog="dulwich bugreport",
+            description=(
+                "Collect information about the dulwich/Python environment "
+                "and, when run inside a repository, about that repository, "
+                "for inclusion in a bug report."
+            ),
+        )
+        parser.add_argument(
+            "-o",
+            "--output-directory",
+            metavar="PATH",
+            help="Place the resulting report in PATH instead of the current directory.",
+        )
+        # The default suffix is a strftime format string containing literal
+        # "%" characters; argparse's help formatter treats "%" specially
+        # (it interpolates "%(default)s"-style placeholders), so any
+        # literal "%" in help text must be doubled to survive formatting.
+        escaped_default_suffix = porcelain.BUGREPORT_DEFAULT_SUFFIX_FORMAT.replace(
+            "%", "%%"
+        )
+        parser.add_argument(
+            "-s",
+            "--suffix",
+            default=porcelain.BUGREPORT_DEFAULT_SUFFIX_FORMAT,
+            metavar="FORMAT",
+            help=(
+                "strftime(3) format string used to generate the filename "
+                "suffix, interpreted against the current local time "
+                f"(default: {escaped_default_suffix!r})."
+            ),
+        )
+        parser.add_argument(
+            "--diagnose",
+            nargs="?",
+            const="stats",
+            default=None,
+            metavar="MODE",
+            help=(
+                "Not supported: dulwich does not implement C git's "
+                "compressed diagnostics archive."
+            ),
+        )
+        return parser
+
+    def run(self, args: Sequence[str]) -> int | None:
+        """Execute the bugreport command.
+
+        Args:
+            args: Command line arguments
+        """
+        parser = self._build_parser()
+        parsed_args = parser.parse_args(args)
+
+        if parsed_args.diagnose is not None:
+            parser.error(
+                "--diagnose is not supported by 'dulwich bugreport'; only "
+                "the plain-text report is implemented."
+            )
+
+        try:
+            path = porcelain.bugreport(
+                output_directory=parsed_args.output_directory,
+                suffix=parsed_args.suffix,
+            )
+        except porcelain.BugreportError as e:
+            logger.error("%s", e)
+            return 1
+
+        logger.info("Created new report at '%s'.", path)
+        return 0
+
+
 class cmd_branch(Command):
     """List, create, or delete branches."""
 
@@ -7778,6 +7857,7 @@ commands = {
     "bisect": cmd_bisect,
     "blame": cmd_blame,
     "branch": cmd_branch,
+    "bugreport": cmd_bugreport,
     "bundle": cmd_bundle,
     "cat-file": cmd_cat_file,
     "check-ignore": cmd_check_ignore,

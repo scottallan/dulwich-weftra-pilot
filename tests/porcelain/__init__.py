@@ -41,6 +41,7 @@ from io import BytesIO, StringIO
 from pathlib import Path
 from unittest import skipIf
 
+import dulwich
 from dulwich import porcelain
 from dulwich.am import AmConflict
 from dulwich.client import SendPackResult
@@ -1783,6 +1784,128 @@ class InitTests(TestCase):
         repo = porcelain.init(repo_path, bare=True)
         self.assertTrue(os.path.exists(os.path.join(repo_dir, "refs")))
         repo.close()
+
+
+class BugreportTests(PorcelainTestCase):
+    def test_default_output_location_and_naming(self) -> None:
+        cwd = os.getcwd()
+        self.addCleanup(os.chdir, cwd)
+        work_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, work_dir)
+        os.chdir(work_dir)
+
+        path = porcelain.bugreport()
+
+        self.assertEqual(os.path.dirname(path), work_dir)
+        self.assertRegex(
+            os.path.basename(path), r"^git-bugreport-\d{4}-\d{2}-\d{2}-\d{4}\.txt$"
+        )
+        with open(path) as f:
+            content = f.read()
+        self.assertIn("[System Info]", content)
+        dulwich_version = ".".join(str(part) for part in dulwich.__version__)
+        self.assertIn(f"dulwich version: {dulwich_version}", content)
+        self.assertIn(platform.python_version(), content)
+
+    def test_output_directory(self) -> None:
+        target_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, target_dir)
+
+        path = porcelain.bugreport(output_directory=target_dir)
+
+        self.assertEqual(os.path.dirname(path), target_dir)
+
+    def test_output_directory_missing(self) -> None:
+        parent = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, parent)
+        missing = os.path.join(parent, "does-not-exist")
+
+        self.assertRaises(
+            porcelain.BugreportOutputDirectoryNotFound,
+            porcelain.bugreport,
+            output_directory=missing,
+        )
+        self.assertFalse(os.path.exists(missing))
+
+    def test_suffix_literal(self) -> None:
+        target_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, target_dir)
+
+        path = porcelain.bugreport(output_directory=target_dir, suffix="test")
+
+        self.assertEqual(os.path.basename(path), "git-bugreport-test.txt")
+
+    def test_suffix_strftime(self) -> None:
+        target_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, target_dir)
+
+        path = porcelain.bugreport(output_directory=target_dir, suffix="%Y")
+
+        expected = f"git-bugreport-{time.strftime('%Y')}.txt"
+        self.assertEqual(os.path.basename(path), expected)
+
+    def test_refuses_to_overwrite(self) -> None:
+        target_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, target_dir)
+        porcelain.bugreport(output_directory=target_dir, suffix="fixed")
+
+        self.assertRaises(
+            porcelain.BugreportFileExists,
+            porcelain.bugreport,
+            output_directory=target_dir,
+            suffix="fixed",
+        )
+
+    def test_inside_repository(self) -> None:
+        target_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, target_dir)
+
+        path = porcelain.bugreport(repo=self.repo_path, output_directory=target_dir)
+
+        with open(path) as f:
+            content = f.read()
+        self.assertIn("[Repository Info]", content)
+        self.assertIn(self.repo_path, content)
+        self.assertIn("Bare repository: False", content)
+
+    def test_inside_repository_lists_enabled_hooks(self) -> None:
+        hooks_dir = os.path.join(self.repo_path, ".git", "hooks")
+        os.makedirs(hooks_dir, exist_ok=True)
+        hook_path = os.path.join(hooks_dir, "pre-commit")
+        with open(hook_path, "w") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+        os.chmod(hook_path, 0o755)
+        target_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, target_dir)
+
+        path = porcelain.bugreport(repo=self.repo_path, output_directory=target_dir)
+
+        with open(path) as f:
+            content = f.read()
+        self.assertIn("pre-commit", content)
+
+    def test_inside_repository_omits_disabled_hooks(self) -> None:
+        target_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, target_dir)
+
+        path = porcelain.bugreport(repo=self.repo_path, output_directory=target_dir)
+
+        with open(path) as f:
+            content = f.read()
+        self.assertIn("Enabled hooks: (none)", content)
+
+    def test_outside_repository(self) -> None:
+        cwd = os.getcwd()
+        self.addCleanup(os.chdir, cwd)
+        work_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, work_dir)
+        os.chdir(work_dir)
+
+        path = porcelain.bugreport()
+
+        with open(path) as f:
+            content = f.read()
+        self.assertIn("No Git repository was found", content)
 
 
 class AddTests(PorcelainTestCase):
