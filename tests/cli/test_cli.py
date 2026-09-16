@@ -1139,6 +1139,104 @@ class TestWriteColumns(TestCase):
             self.assertIn(item.decode(), all_output)
 
 
+class BugreportCommandTest(DulwichCliTestCase):
+    """Tests for bugreport command."""
+
+    def _report_path(self, log_output: str) -> str:
+        match = re.search(r"Created new report at '(.+)'\.", log_output)
+        self.assertIsNotNone(match, log_output)
+        return match.group(1)
+
+    def test_default_naming(self) -> None:
+        with self.assertLogs("dulwich.cli", level="INFO") as cm:
+            result, _stdout, _stderr = self._run_cli("bugreport")
+            self.assertEqual(result, 0)
+            path = self._report_path("\n".join(cm.output))
+        self.assertEqual(os.path.dirname(path), self.repo_path)
+        self.assertRegex(
+            os.path.basename(path), r"^git-bugreport-\d{4}-\d{2}-\d{2}-\d{4}\.txt$"
+        )
+        with open(path) as f:
+            content = f.read()
+        self.assertIn("[System Info]", content)
+        self.assertIn("[Repository Info]", content)
+        self.assertIn(self.repo_path, content)
+
+    def test_output_directory(self) -> None:
+        output_dir = os.path.join(self.test_dir, "reports")
+        os.mkdir(output_dir)
+        with self.assertLogs("dulwich.cli", level="INFO") as cm:
+            result, _stdout, _stderr = self._run_cli(
+                "bugreport", "--output-directory", output_dir
+            )
+            self.assertEqual(result, 0)
+            path = self._report_path("\n".join(cm.output))
+        self.assertEqual(os.path.dirname(path), output_dir)
+
+    def test_output_directory_missing(self) -> None:
+        missing_dir = os.path.join(self.test_dir, "does-not-exist")
+        with self.assertLogs("dulwich.cli", level="ERROR") as cm:
+            result, _stdout, _stderr = self._run_cli(
+                "bugreport", "--output-directory", missing_dir
+            )
+            self.assertEqual(result, 1)
+            log_output = "\n".join(cm.output)
+        self.assertIn("does not exist", log_output)
+        self.assertEqual(sorted(glob.glob(os.path.join(missing_dir, "*"))), [])
+
+    def test_suffix_literal(self) -> None:
+        with self.assertLogs("dulwich.cli", level="INFO") as cm:
+            _result, _stdout, _stderr = self._run_cli("bugreport", "--suffix", "test")
+            path = self._report_path("\n".join(cm.output))
+        self.assertEqual(os.path.basename(path), "git-bugreport-test.txt")
+
+    def test_refuses_to_overwrite(self) -> None:
+        self._run_cli("bugreport", "--suffix", "fixed")
+        with self.assertLogs("dulwich.cli", level="ERROR") as cm:
+            result, _stdout, _stderr = self._run_cli("bugreport", "--suffix", "fixed")
+            self.assertEqual(result, 1)
+            log_output = "\n".join(cm.output)
+        self.assertIn("already exists", log_output)
+
+    def test_outside_repository(self) -> None:
+        work_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, work_dir)
+        old_cwd = os.getcwd()
+        self.addCleanup(os.chdir, old_cwd)
+        os.chdir(work_dir)
+
+        with self.assertLogs("dulwich.cli", level="INFO") as cm:
+            result = cli.main(["bugreport"])
+            self.assertEqual(result, 0)
+            path = self._report_path("\n".join(cm.output))
+
+        self.assertEqual(os.path.dirname(path), work_dir)
+        with open(path) as f:
+            content = f.read()
+        self.assertIn("No Git repository was found", content)
+
+    def test_diagnose_not_supported(self) -> None:
+        with self.assertRaises(SystemExit) as error:
+            self._run_cli("bugreport", "--diagnose")
+        self.assertEqual(error.exception.code, 2)
+
+    def test_diagnose_with_mode_not_supported(self) -> None:
+        with self.assertRaises(SystemExit) as error:
+            self._run_cli("bugreport", "--diagnose=all")
+        self.assertEqual(error.exception.code, 2)
+
+    def test_help_documents_options_and_defaults(self) -> None:
+        # dulwich's top-level parser intercepts "-h"/"--help" before it
+        # reaches a subcommand's own parser, so exercise the subcommand
+        # parser cmd_bugreport.run() builds directly instead.
+        help_text = cli.cmd_bugreport._build_parser().format_help()
+        self.assertIn("--output-directory", help_text)
+        self.assertIn("--suffix", help_text)
+        self.assertIn(porcelain.BUGREPORT_DEFAULT_SUFFIX_FORMAT, help_text)
+        self.assertIn("--diagnose", help_text)
+        self.assertIn("not supported", help_text.lower())
+
+
 class CheckoutCommandTest(DulwichCliTestCase):
     """Tests for checkout command."""
 
