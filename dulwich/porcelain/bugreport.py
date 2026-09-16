@@ -61,6 +61,20 @@ class BugreportFileExists(BugreportError):
         )
 
 
+class BugreportInvalidSuffix(BugreportError):
+    """Raised when ``suffix`` expands to a value that is not a plain filename."""
+
+    def __init__(self, suffix: str, expanded: str) -> None:
+        """Initialize with the offending suffix and its strftime expansion."""
+        self.suffix = suffix
+        self.expanded = expanded
+        super().__init__(
+            f"suffix {suffix!r} expands to {expanded!r}, which is not a "
+            "valid filename component (it must not contain path separators "
+            "or resolve outside of output_directory)"
+        )
+
+
 def _system_information() -> str:
     """Collect information about the dulwich/Python environment.
 
@@ -159,7 +173,9 @@ def bugreport(
       output_directory: Directory the report should be written into.
         Defaults to the current working directory. Must already exist.
       suffix: ``strftime``-style format string used to generate the
-        filename suffix. Defaults to :data:`DEFAULT_SUFFIX_FORMAT`.
+        filename suffix. Defaults to :data:`DEFAULT_SUFFIX_FORMAT`. Its
+        expansion must not contain path separators (or otherwise resolve
+        outside of ``output_directory``).
 
     Returns:
       The path of the bug report file that was written.
@@ -167,6 +183,9 @@ def bugreport(
     Raises:
       BugreportOutputDirectoryNotFound: if ``output_directory`` is given but
         does not exist.
+      BugreportInvalidSuffix: if ``suffix`` expands to a value containing
+        path separators, which would place the report outside of
+        ``output_directory``.
       BugreportFileExists: if the target report file already exists.
     """
     from ..errors import NotGitRepository
@@ -180,7 +199,14 @@ def bugreport(
             raise BugreportOutputDirectoryNotFound(directory)
 
     timestamp = datetime.datetime.now().strftime(suffix)
-    target = os.path.join(directory, f"git-bugreport-{timestamp}.txt")
+    filename = f"git-bugreport-{timestamp}.txt"
+    if os.path.basename(filename) != filename:
+        # ``suffix`` is an strftime format string, but strftime passes any
+        # literal (non-directive) characters through unchanged, including
+        # path separators such as "/" or "..". Reject anything that would
+        # cause the report to land outside of ``directory``.
+        raise BugreportInvalidSuffix(suffix, timestamp)
+    target = os.path.join(directory, filename)
     if os.path.exists(target):
         raise BugreportFileExists(target)
 

@@ -92,6 +92,7 @@ __all__ = [
     "INFINITE_DEPTH",
     "BugreportError",
     "BugreportFileExists",
+    "BugreportInvalidSuffix",
     "BugreportOutputDirectoryNotFound",
     "CheckoutError",
     "CountObjectsResult",
@@ -448,6 +449,7 @@ from .bugreport import (
 from .bugreport import (
     BugreportError,
     BugreportFileExists,
+    BugreportInvalidSuffix,
     BugreportOutputDirectoryNotFound,
     bugreport,
 )
