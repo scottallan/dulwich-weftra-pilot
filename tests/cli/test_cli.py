@@ -1226,10 +1226,14 @@ class BugreportCommandTest(DulwichCliTestCase):
         self.assertEqual(error.exception.code, 2)
 
     def test_help_documents_options_and_defaults(self) -> None:
-        # dulwich's top-level parser intercepts "-h"/"--help" before it
-        # reaches a subcommand's own parser, so exercise the subcommand
-        # parser cmd_bugreport.run() builds directly instead.
-        help_text = cli.cmd_bugreport._build_parser().format_help()
+        # Argparse's help action prints help and calls sys.exit(0) as part
+        # of parsing, so capture output via an explicit stream we can still
+        # read after the SystemExit propagates out of _run_cli.
+        stdout = io.StringIO()
+        with self.assertRaises(SystemExit) as error:
+            self._run_cli("bugreport", "--help", stdout_stream=stdout)
+        self.assertEqual(error.exception.code, 0)
+        help_text = stdout.getvalue()
         self.assertIn("--output-directory", help_text)
         self.assertIn("--suffix", help_text)
         self.assertIn(porcelain.BUGREPORT_DEFAULT_SUFFIX_FORMAT, help_text)

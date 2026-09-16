@@ -7968,6 +7968,17 @@ def main(argv: Sequence[str] | None = None) -> int | None:
     if argv is None:
         argv = sys.argv[1:]
 
+    # Only args preceding the first non-option token are global; everything
+    # from the subcommand name onward is passed through untouched. Otherwise
+    # a subcommand-scoped flag like "dulwich bugreport --help" would be
+    # swallowed here instead of reaching the subcommand's own parser.
+    split = len(argv)
+    for i, arg in enumerate(argv):
+        if not arg.startswith("-"):
+            split = i
+            break
+    global_argv, remaining = list(argv[:split]), list(argv[split:])
+
     # Parse only the global options and command, stop at first positional
     parser = argparse.ArgumentParser(
         prog="dulwich",
@@ -7978,8 +7989,7 @@ def main(argv: Sequence[str] | None = None) -> int | None:
     parser.add_argument("--pager", action="store_true", help="Force enable pager")
     parser.add_argument("--help", "-h", action="store_true", help="Show help")
 
-    # Parse known args to separate global options from command args
-    global_args, remaining = parser.parse_known_args(argv)
+    global_args = parser.parse_args(global_argv)
 
     # Apply global pager settings
     if global_args.no_pager:
